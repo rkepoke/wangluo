@@ -1,0 +1,162 @@
+三、半关闭的socket     ///很好的解决了一个问题   就是在socket中如何让对方知道我传输数据完成了. 通过半关闭socket即可
+　　在上面的Demo中，我们是以行作为通信的最小数据单位，服务器端也是逐行进行处理的。但是我们在大多数场景下，通信的数据单位是多行的，这时候Socket的输出流如何表达输出的数据已经结束？
+
+　　在IO学习过程中提到过，如何要表示输出已经结束，则通过关闭输出流来实现，但是在socket中是行不通的，因为关闭socket，会导致无法再从该socket中读取数据了。为了解决这种问题，java提供了两个半关闭的方法：
+
+重点:
+1、shutdownInput():关闭该Socket的输入流，程序还可以通过该Socket的输出流输出数据。
+2、shutdownOutput():关闭该Socket的输出流，程序还可以通过该Socket的输入流读取数据。
+如果我们对同一个Socket实例先后调用shutdownInput和shutdownOutput方法，该Socket实例依然没有被关闭，只是该Socket既不能输出数据，也不能读取数据。
+
+
+可这回引起一个问题就是双方没办法持久化通信?怎么解决
+服务器端：
+
+ 1         ServerSocket ss = new ServerSocket(5555);
+ 2         Socket socket = ss.accept();
+ 3         PrintStream ps = new PrintStream(socket.getOutputStream());
+ 4         ps.println("服务器端：开源中国杭州论坛");
+ 5         ps.println("服务器端：杭州G20峰会");
+ 6         //关闭输出流，表明输出已经结束
+ 7         socket.shutdownOutput();
+ 8         //判断该socket是否关闭
+ 9         System.out.println(socket.isClosed());
+10         Scanner scan = new Scanner((socket.getInputStream()));
+11         while(scan.hasNextLine())
+12         {
+13             System.out.println(scan.nextLine());
+14         }
+15         scan.close();
+16         socket.close();
+17         ss.close();
+18         
+19     
+
+ 客户端：
+
+ 1         Socket s = new Socket("localhost", 5555);
+ 2         InputStream is = s.getInputStream();
+ 3         byte[] buffer = new byte[1024];
+ 4         int flag = 0;
+ 5         while(-1 != (flag = is.read(buffer,0,buffer.length)))
+ 6         {
+ 7             String str = new String(buffer,0,flag);
+ 8             System.out.print(str);
+ 9         }
+10         PrintStream ps = new PrintStream(s.getOutputStream());
+11         ps.println("客户端：欢迎参加开源中国论坛");
+12         ps.println("客户端：欢迎参加G20峰会");
+13         is.close();
+14         ps.close();
+15         s.close();
+16     
+
+
+在服务器端程序中可以看到，在输出两段字符串之后，调用了shutdownOutput方法，表示输出已经结束。随即又去判断了socket是否关闭，执行的结果为false，表示socket并未关闭。
+
+这是重点:
+　　但是在调用了这两个半关闭的方法关闭了输出输入流之后，该socket无法再次打开该输出流或者输入流。因此这种场景不适合保持持久通信状态的交互使用，只适合一站式的通信协议.例如http协议：客户端连接到服务器之后，开始发送数据，发送完成之后无须再次发送数据，只需要读取服务器响应数据即可，读取数据完毕之后，该socket连接也被关闭了。
+
+
+四、基于UDP协议的网络编程             ///我应该是忘乐意根据UDP去编程
+　　前面介绍的socket编程都是基于TCP协议的，现在来看下基于UDP协议的编程，TCP和UDP的区别在上一章已经有过介绍。
+　　UDP协议的主要作用就是完成网络数据流和数据报之间的转换-----在信息的发送端，UDP协议将网络数据流封装到数据报，然后将数据报发送出去；在信息的接收端，UDP协议将数据报转换成实际数据报内容。
+
+1、首先在UDP网络编程中没有服务器端和客户端这种说法，两个socket之间没有虚拟链路，只是接收和发送数据报文而已。
+
+2、这里面有两个重要的类：DatagramSocket 和DatagramPacket。前者是用来发送和接收数据包的套接字，后者表示数据包，每条报文仅根据该包中的包含的信息从一台机器        路由到另一台机器。
+
+3、DatagramSocket 的两个构造函数：
+     DatagramSocket()：构造数据报套接字并将其绑定到本地主机上任何可用的端口。
+     DatagramSocket(int port)：创建数据报套接字并将其绑定到本地主机上的指定端口。
+
+     在我们下面的DEMO中，UDPServerTest类中先发送数据报，使用的是套接字的无参构造器，而UDPClientTest类中先接收数据报，必须监听某一个端口，所以使用的是套接字的有参构造器。
+
+4、DatagramPacket：创建的时候分为接收和发送两种
+      DatagramPacket(byte[] buf, int length)：用来接收长度为 length 的数据包。
+      DatagramPacket(byte[] buf, int length, InetAddress address, int port)：用来将长度为 length 的包发送到指定主机上的指定端口号。
+
+ 1 public class UDPServerTest
+ 2 {
+ 3     public static void main(String[] args) throws IOException
+ 4     {
+ 5         DatagramSocket ds = new DatagramSocket();
+ 6         String str = "hello world";
+ 7         //构造用于发送的数据包，指定主机和端口号
+ 8         DatagramPacket packet = new DatagramPacket(str.getBytes(),
+ 9                 str.length(), InetAddress.getByName("localhost"), 5555);
+10         ds.send(packet);
+11         
+12         //读取从客户端发送过来的响应
+13         byte[] buffer = new byte[1024];
+14         DatagramPacket packet2 = new DatagramPacket(buffer,buffer.length);
+15         ds.receive(packet2);
+16         String str2 = new String(buffer,0,packet2.getLength());
+17         System.out.println(str2);
+18         ds.close();
+19     }
+20 }
+
+
+public class UDPClientTest
+{
+    public static void main(String[] args) throws Exception
+    {
+        DatagramSocket ds = new DatagramSocket(5555);
+        byte[] buffer = new byte[1024];
+        DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+        ds.receive(packet);
+        String str = new String(buffer, 0, packet.getLength());
+        System.out.println(str);
+
+        // 接收到数据包之后，客户端返回响应回去
+        String str2 = "welcome";
+        DatagramPacket packet2 = new DatagramPacket(str2.getBytes(), str2
+                .length(), packet.getAddress(), packet.getPort());
+        ds.send(packet2);
+        ds.close();
+    }
+}
+
+/////receive方法也是阻塞方法
+1、上面的程序中，第一步是服务器端（暂且以这种叫法来区分这两个类）创建一个UDP套接字，没有指定端口，使用的是系统分配的端口。然后构建了一个数据包，包中指定      了目标机器的ip和端口号。
+
+2、作为客户端，创建了一个UDP套接字，并且绑定了端口，如果想要接收到服务端发送过来的报文，绑定的端口必须和服务器端发送的包中指定的端口一致。
+
+3、客户端打印了包中的内容之后，想要返回一些内容回去。这个时候，服务器端的ip和端口号可以从之前发送过来的数据包中获取。
+
+     DatagramPacket packet2 = new DatagramPacket(str2.getBytes(), str2.length(), packet.getAddress(), packet.getPort());
+
+4、在服务器接收数据包的时候，已经不需要再像客户端创建套接字一样去绑定端口了，因为目前监听的端口和客户端发送的包中指定的端口是一样的。
+
+5、打印看下服务器端的ip和监听的端口号：
+
+serverIp =/127.0.0.1;serverPort=62965
+6、其中DatagramSocket的receive(DatagramPacket p)方法在接收到数据包前一直阻塞。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
