@@ -1,0 +1,188 @@
+//标识了依稀自己的理解,不一定对,以后检查出来会做修改:
+// 创建 Selector     获得一个多路复用器,它在底层轮询所有channel,看相应的事件有没有准备好
+Selector selector = Selector.open();
+// 注册 Channel 到 Selector 中    创建一个新的连接,设为非阻塞,并把这个连接注册到复用器中,并说明它对什么事件干兴趣 (主要有4中事件)
+channel.configureBlocking(false);
+SelectionKey key = channel.register(selector, SelectionKey.OP_READ);
+while (true) {
+      // 通过 Selector 选择 Channel        select()方法就是在底层轮询有没有准备好的事件,只要有准备好的事件,就可以获得准备好的事件的channel来处理
+    int readyChannels = selector.select();
+    if (readyChannels == 0) {
+       continue;
+    }
+    // 获得可操作的 Channel        获得准备好的事件的channel来处理
+    Set selectedKeys = selector.selectedKeys();
+    // 遍历 SelectionKey 数组
+    Iterator<SelectionKey> keyIterator = selectedKeys.iterator();
+    while (keyIterator.hasNext()) {        //看获得准备好的事件的channel都是说明类型的事件去相应的方法去处理即可
+        SelectionKey key = keyIterator.next();
+        if (key.isAcceptable()) {      //准备好了接收
+            // a connection was accepted by a ServerSocketChannel.
+        } else if (key.isConnectable()) {          //准备好了连接
+            // a connection was established with a remote server.
+        } else if (key.isReadable()) {         //准备好了可读
+            // a channel is ready for reading
+        } else if (key.isWritable()) {         //准备好了可写
+            // a channel is ready for writing
+        }
+        // 移除        布不移除的话,就会重复的处理,可能会造成死循环,这块不是很懂
+        keyIterator.remove(); // 
+    }
+}
+
+package 多线程;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
+import java.util.Iterator;
+
+public class NIOServer {
+    private  Selector selector;
+
+    /**
+     * 首先要有个服务启动
+     * @param port
+     * @throws IOException
+     */
+    public void initSrever(int port) throws IOException {
+        ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+        serverSocketChannel.configureBlocking(false);
+//        serverSocketChannel.bind(new InetSocketAddress(port));
+        serverSocketChannel.socket().bind(new InetSocketAddress(port));
+        this.selector = Selector.open();
+        //注册连接到复用器中
+        serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+    }
+
+    public void listen() throws IOException {
+        //开始循环处理,注意这里是Java层面的循环处理,不是select方法的轮训监听,不要误混为一谈   这里才开始学习的坑
+        while(true){
+            //调用select方法看有没有准备好事件的连接/即channel
+            int ready = selector.select();
+            if(ready==0){
+                continue;//没有准备好的就继续监听,有准备好的采取处理
+            }
+            Iterator<SelectionKey> iterator = this.selector.selectedKeys().iterator();
+            //对所有准备就绪的channel做处理
+            while(iterator.hasNext()){
+                //selectionKey 可以理解为事件类型
+                SelectionKey selectionKey = iterator.next();//拿到相应的事件,然后根据事件的类型做相应的处理
+                if(selectionKey.isAcceptable()){//是不是建立连接
+                    //如果是连接准备好了,完全可以,通过事件类型拿到与之相关的ServerSocketChannel,也就是之前声明的,拿到之后就可以建立连接了
+                    ServerSocketChannel channel = (ServerSocketChannel) selectionKey.channel();
+                    //与客户端建立连接,并设置为非阻塞型
+                    SocketChannel socketChannel = channel.accept();
+                    socketChannel.configureBlocking(false);
+                    //往客户端发送信息
+                    socketChannel.write(ByteBuffer.wrap("服务端向客户端发送信息".getBytes()));
+                    //往新建的连接里注册一个事件监听
+                    socketChannel.register(selector,SelectionKey.OP_READ);
+                }else if(selectionKey.isReadable()){
+                    //处理读事件
+                    read(selectionKey);
+                }
+                //处理过的事件 就要删除,防止死循环
+                iterator.remove();
+            }
+        }
+    }
+
+    private void read(SelectionKey selectionKey) throws IOException {
+        //通过事件本身得到与之相关的连接,然后做一些操作
+        SocketChannel channel = (SocketChannel) selectionKey.channel();
+        //创建缓冲区开始进行操作
+        ByteBuffer buffer=ByteBuffer.allocate(1024);
+        //数据从通道读入缓冲区
+        channel.read(buffer);
+        String msg = new String(buffer.array());
+        System.out.println("客户端传过来的信息是:"+msg);
+        ByteBuffer outBuffer=ByteBuffer.wrap("服务端收到了".getBytes());
+        channel.write(outBuffer);
+    }
+
+    public static void main(String[] args) throws IOException {
+        NIOServer server=new NIOServer();
+        server.initSrever(12345);
+        server.listen();//ok
+    }
+}
+
+
+
+客户端:
+package 多线程;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
+import java.util.Iterator;
+
+//与服务端的写法大同小异
+public class NIOClient {
+    private Selector selector;
+    public void initClient(String ip,int port) throws IOException {
+        SocketChannel socketChannel = SocketChannel.open();
+        socketChannel.configureBlocking(false);
+        this.selector = Selector.open();
+        //指定socket哟连接的端口
+//        socketChannel.bind(new InetSocketAddress(ip,port));    客户端不是监听,而是连接
+        socketChannel.connect(new InetSocketAddress(ip,port));
+        //注册事件
+        socketChannel.register(selector, SelectionKey.OP_CONNECT);
+    }
+
+    public void  listen() throws IOException {
+        while(true){
+            int ready = selector.select();//这里才是select的轮训
+            if(ready==0){
+                continue;
+            }
+            //对准备好的事件做处理
+            Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
+            while(iterator.hasNext()){
+                SelectionKey selectionKey = iterator.next();
+                //根据事件的类型去做相应的处理
+                if(selectionKey.isConnectable()){
+                    //连接准备好了,就去连接啊
+                    SocketChannel channel = (SocketChannel) selectionKey.channel();
+                    // 如果正在连接，则完成连接  不谢可能会出现java.nio.channels.NotYetConnectedException
+                    if (channel.isConnectionPending()) {
+                        channel.finishConnect();
+
+                    }
+                    channel.configureBlocking(false);
+                    //连接好了 就发送信息测一下
+                    channel.write(ByteBuffer.wrap("客户端连接好了,可以发送信息:".getBytes()));
+                    //注册一个事件
+                    channel.register(selector,SelectionKey.OP_READ);
+                }else if(selectionKey.isReadable()){
+                    read(selectionKey);
+                }
+            }
+        }
+    }
+    public void read(SelectionKey selectionKey) throws IOException {
+        SocketChannel channel = (SocketChannel) selectionKey.channel();
+        //建立缓冲区,准备接受数据
+        ByteBuffer buffer=ByteBuffer.allocate(1024);
+        channel.read(buffer);
+        String msg=new String(buffer.array());
+        System.out.println("连接已经建立!"+msg);
+        ByteBuffer outBuffer = ByteBuffer.wrap(msg.getBytes());
+        channel.write(outBuffer);// 将消息回送给服务端
+    }
+
+    public static void main(String[] args) throws IOException {
+        NIOClient client=new NIOClient();
+        client.initClient("127.0.0.1",12345);
+        client.listen();
+    }
+}
+
+
+参考:
+https://www.jianshu.com/p/a7e5e1fe388b
